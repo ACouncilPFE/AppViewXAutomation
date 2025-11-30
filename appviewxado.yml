@@ -1,0 +1,66 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  appviewx_api_url: 'https://your-appviewx-instance/api/certificates'
+  appviewx_api_key: '$(APPVIEWX_API_KEY)'  # Stored securely in Azure DevOps variable group
+  cert_profile: 'Standard_TLS_Profile'
+  cert_common_name: '$(Build.Repository.Name).$(Build.SourceBranchName).yourdomain.com'
+  cert_validity_days: '365'
+  cert_output_path: '$(Build.ArtifactStagingDirectory)/certs'
+
+stages:
+- stage: CertAutomation
+  displayName: 'Certificate Enrollment & Renewal'
+  jobs:
+  - job: RequestCertificate
+    displayName: 'Request or Renew Certificate'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Bash@3
+      name: CertRequest
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo "Requesting certificate from AppViewX..."
+          curl -X POST "$appviewx_api_url/request" \
+            -H "Authorization: Bearer $appviewx_api_key" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "profile": "'$cert_profile'",
+              "commonName": "'$cert_common_name'",
+              "validity": '$cert_validity_days',
+              "san": ["'$cert_common_name'", "www.'$cert_common_name'"]
+            }' -o "$cert_output_path/certificate.pem"
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)/certs'
+        artifactName: 'certificates'
+        publishLocation: 'Container'
+
+- stage: DeployCertificate
+  displayName: 'Deploy Certificate to Endpoint'
+  dependsOn: CertAutomation
+  jobs:
+  - job: DeployCert
+    displayName: 'Bind Certificate to Web App'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'Your-Service-Connection'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "Binding certificate to Azure Web App..."
+          az webapp config ssl upload --name YourWebAppName --resource-group YourResourceGroup \
+            --certificate-file "$(Pipeline.Workspace)/certificates/certificate.pem" \
+            --certificate-password "your-cert-password"
+
+          az webapp config ssl bind --name YourWebAppName --resource-group YourResourceGroup \
+            --certificate-thumbprint "your-thumbprint" --ssl-type SNI
