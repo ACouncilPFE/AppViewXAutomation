@@ -5,36 +5,42 @@ trigger:
 
 variables:
   appviewx_api_url: 'https://your-appviewx-instance/api/certificates'
-  appviewx_api_key: '$(APPVIEWX_API_KEY)'  # Stored securely in Azure DevOps variable group
-  cert_profile: 'Standard_TLS_Profile'
+  appviewx_api_key: '$(APPVIEWX_API_KEY)'  # Secure variable
+  cert_profile_windows: 'Windows_CA_Profile'
+  cert_profile_digicert: 'DigiCert_Profile'
   cert_common_name: '$(Build.Repository.Name).$(Build.SourceBranchName).yourdomain.com'
   cert_validity_days: '365'
   cert_output_path: '$(Build.ArtifactStagingDirectory)/certs'
+  selected_ca: 'windows'  # Change to 'digicert' as needed
 
 stages:
 - stage: CertAutomation
   displayName: 'Certificate Enrollment & Renewal'
   jobs:
   - job: RequestCertificate
-    displayName: 'Request or Renew Certificate'
+    displayName: 'Request Certificate from Selected CA'
     pool:
       vmImage: 'ubuntu-latest'
     steps:
-    - task: Bash@3
-      name: CertRequest
-      inputs:
-        targetType: 'inline'
-        script: |
-          echo "Requesting certificate from AppViewX..."
-          curl -X POST "$appviewx_api_url/request" \
-            -H "Authorization: Bearer $appviewx_api_key" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "profile": "'$cert_profile'",
-              "commonName": "'$cert_common_name'",
-              "validity": '$cert_validity_days',
-              "san": ["'$cert_common_name'", "www.'$cert_common_name'"]
-            }' -o "$cert_output_path/certificate.pem"
+    - bash: |
+        echo "Selected CA: $selected_ca"
+        if [ "$selected_ca" == "windows" ]; then
+          cert_profile=$cert_profile_windows
+        else
+          cert_profile=$cert_profile_digicert
+        fi
+
+        echo "Using profile: $cert_profile"
+        curl -X POST "$appviewx_api_url/request" \
+          -H "Authorization: Bearer $appviewx_api_key" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "profile": "'$cert_profile'",
+            "commonName": "'$cert_common_name'",
+            "validity": '$cert_validity_days',
+            "san": ["'$cert_common_name'", "www.'$cert_common_name'"]
+          }' -o "$cert_output_path/certificate.pem"
+      displayName: 'Request Certificate via AppViewX'
 
     - task: PublishBuildArtifacts@1
       inputs:
